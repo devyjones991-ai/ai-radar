@@ -11,6 +11,15 @@
   },
   "scripts": {
     "start": "node memory-service.js",
-    "test": "node test-connection.js"
+    "lint": "eslint . --ext .js",
+    "test": "npm run test:unit && npm run test:smoke && npm run test:e2e",
+    "test:unit": "jest --config jest.config.unit.cjs",
+    "test:smoke": "jest --config jest.config.smoke.cjs",
+    "test:e2e": "jest --config jest.config.e2e.cjs"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.0",
+    "jest": "^29.7.0",
+    "supertest": "^6.3.4"
   }
 }
