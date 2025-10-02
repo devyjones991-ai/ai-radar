@@ -13,9 +13,9 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - TZ=${TZ}
     volumes:
-      - ./data/postgres:/var/lib/postgresql/data
-      - ./config/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
-      - ./logs:/var/log
+      - ../data/postgres:/var/lib/postgresql/data
+      - ../config/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ../logs:/var/log
     networks:
       - ai-radar-network
     healthcheck:
@@ -48,9 +48,9 @@ services:
     ports:
       - "${N8N_PORT}:5678"
     volumes:
-      - ./data/n8n:/home/node/.n8n
-      - ./workflows:/home/node/workflows
-      - ./logs:/home/node/logs
+      - ../data/n8n:/home/node/.n8n
+      - ../workflows:/home/node/workflows
+      - ../logs:/home/node/logs
     networks:
       - ai-radar-network
     depends_on:
@@ -73,9 +73,9 @@ services:
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL}
       - TZ=${TZ}
     volumes:
-      - ./scripts:/app
-      - ./data/ollama-memory:/app/data
-      - ./logs:/app/logs
+      - ../scripts:/app
+      - ../data/ollama-memory:/app/data
+      - ../logs:/app/logs
     networks:
       - ai-radar-network
     depends_on:
