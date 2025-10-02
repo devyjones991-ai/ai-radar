@@ -11,6 +11,7 @@
   },
   "scripts": {
     "start": "node memory-service.js",
-    "test": "node test-connection.js"
+    "test": "node --test __tests__",
+    "test:connection": "node test-connection.js"
   }
 }
