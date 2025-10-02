@@ -33,9 +33,45 @@ jobs:
 
     steps:
       - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Docker Compose plugin
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y docker-compose-plugin
+
+      - name: Validate Docker Compose configuration
+        run: docker compose -f infra/docker-compose.yml config
+
+      - name: Start test environment
+        run: docker compose -f infra/docker-compose.yml --env-file .env.test up -d --wait
+
+      - name: Smoke check
+        run: curl --fail --retry 5 --retry-delay 2 --retry-connrefused http://localhost:5678/healthz
+
+      - name: Tear down environment
+        if: always()
+        run: docker compose -f infra/docker-compose.yml down --volumes
 
   scripts:
     name: Scripts Service CI
     runs-on: ubuntu-latest
     defaults:
       run:
+        working-directory: scripts
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: scripts/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
