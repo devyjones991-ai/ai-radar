@@ -64,6 +64,7 @@ services:
     container_name: ai-radar-memory
     restart: unless-stopped
     working_dir: /app
+    command: ["sh", "-c", "npm ci --only=production && npm run start"]
     environment:
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
