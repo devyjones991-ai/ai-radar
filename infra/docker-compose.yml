@@ -70,7 +70,9 @@ services:
       - POSTGRES_DB=${POSTGRES_DB}
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL}
+      - LLM_ENABLED=${LLM_ENABLED}
+      - LLM_MODE=${LLM_MODE}
+      - LLM_BASE_URL=${LLM_BASE_URL}
       - TZ=${TZ}
     volumes:
       - ./scripts:/app

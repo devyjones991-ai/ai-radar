@@ -9,6 +9,7 @@ COPY package.json ./
 RUN npm install --production
 
 COPY memory-service.js ./
+COPY llm-client.js ./
 
 EXPOSE 3000
 
