@@ -1,12 +1,15 @@
+const fs = require('fs');
+const path = require('path');
+
+loadEnvFile();
+
 const express = require('express');
 const { Pool } = require('pg');
-const axios = require('axios');
-const { v4: uuidv4 } = require('uuid');
+const llmClient = require('./llm-client');
 
 const app = express();
 app.use(express.json());
 
-// Подключение к PostgreSQL
 const pool = new Pool({
   host: process.env.POSTGRES_HOST || 'postgres',
   port: process.env.POSTGRES_PORT || 5432,
@@ -15,9 +18,35 @@ const pool = new Pool({
   password: process.env.POSTGRES_PASSWORD,
 });
 
-const OLLAMA_URL = process.env.OLLAMA_BASE_URL || 'http://host.docker.internal:11434';
+function loadEnvFile() {
+  const envFileName = process.env.NODE_ENV === 'test' ? '.env.test' : '.env';
+  const envPath = path.resolve(__dirname, '..', envFileName);
 
-// Функция для получения контекста из памяти
+  if (!fs.existsSync(envPath)) {
+    return;
+  }
+
+  const contents = fs.readFileSync(envPath, 'utf8');
+  for (const line of contents.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) {
+      continue;
+    }
+
+    const [key, ...rest] = trimmed.split('=');
+    if (!key) {
+      continue;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(process.env, key) && process.env[key] !== undefined) {
+      continue;
+    }
+
+    const value = rest.join('=');
+    process.env[key] = value;
+  }
+}
+
 async function getSessionContext(sessionId, limit = 10) {
   try {
     const result = await pool.query(
@@ -31,7 +60,6 @@ async function getSessionContext(sessionId, limit = 10) {
   }
 }
 
-// Функция для сохранения сообщения в память
 async function saveMessage(sessionId, role, messageText, modelUsed = null, tokensUsed = null) {
   try {
     await pool.query(
@@ -43,53 +71,37 @@ async function saveMessage(sessionId, role, messageText, modelUsed = null, token
   }
 }
 
-// API endpoint для обработки запроса с памятью
 app.post('/chat-with-memory', async (req, res) => {
   try {
     const { message, sessionId = 'default', model = 'deepseek-r1:70b', options = {} } = req.body;
-    
-    // Получаем контекст из памяти
+
     const context = await getSessionContext(sessionId);
-    
-    // Формируем полный контекст для модели
+
     let fullPrompt = '';
     if (context.length > 0) {
       fullPrompt = context.map(c => `${c.role}: ${c.message_text}`).join('\n') + '\n';
     }
     fullPrompt += `user: ${message}`;
-    
-    // Отправляем запрос к Ollama
-    const ollamaResponse = await axios.post(`${OLLAMA_URL}/api/generate`, {
-      model: model,
-      prompt: fullPrompt,
-      stream: false,
-      options: {
-        temperature: options.temperature || 0.3,
-        top_p: options.top_p || 0.9,
-        ...options
-      }
-    });
-    
-    const response = ollamaResponse.data.response;
-    
-    // Сохраняем в память
+
+    const llmResult = await llmClient.generate(fullPrompt, { model, options });
+
     await saveMessage(sessionId, 'user', message, model);
-    await saveMessage(sessionId, 'assistant', response, model, ollamaResponse.data.eval_count);
-    
+    await saveMessage(sessionId, 'assistant', llmResult.response, model, llmResult.evalCount);
+
     res.json({
-      response: response,
+      response: llmResult.response,
       sessionId: sessionId,
       model: model,
-      contextUsed: context.length > 0
+      contextUsed: context.length > 0,
+      llmDisabled: !!llmResult.disabled,
+      evalCount: llmResult.evalCount,
     });
-    
   } catch (error) {
     console.error('Error in chat-with-memory:', error);
-    res.status(500).json({ error: error.message, stack: error.stack });
+    res.status(500).json({ error: 'Failed to generate response' });
   }
 });
 
-// Healthcheck endpoint
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
@@ -105,5 +117,5 @@ module.exports = {
   app,
   getSessionContext,
   saveMessage,
-  pool
+  pool,
 };

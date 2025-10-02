@@ -11,7 +11,7 @@
   },
   "scripts": {
     "start": "node memory-service.js",
-    "test": "jest",
+    "test": "NODE_ENV=test jest",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix"
   },
