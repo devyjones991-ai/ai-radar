@@ -11,9 +11,12 @@
   },
   "scripts": {
     "start": "node memory-service.js",
-    "test": "jest"
+    "test": "jest",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix"
   },
   "devDependencies": {
+    "eslint": "^8.57.0",
     "jest": "^30.2.0",
     "supertest": "^7.1.4"
   }
