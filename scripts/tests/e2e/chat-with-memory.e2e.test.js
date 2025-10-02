@@ -7,7 +7,7 @@ jest.setTimeout(30000);
 describe('E2E: /chat-with-memory', () => {
   let pool;
   let app;
-  let axiosStub;
+  let llmClientStub;
   let skipSuite = false;
 
   beforeAll(async () => {
@@ -34,16 +34,15 @@ describe('E2E: /chat-with-memory', () => {
         )
       `);
 
-      axiosStub = {
-        post: jest.fn().mockResolvedValue({
-          data: {
-            response: 'E2E response',
-            eval_count: 256,
-          },
+      llmClientStub = {
+        generate: jest.fn().mockResolvedValue({
+          response: 'E2E response',
+          evalCount: 256,
+          disabled: false,
         }),
       };
 
-      app = createApp({ pool, axiosInstance: axiosStub, ollamaBaseUrl: 'http://ollama.e2e' });
+      app = createApp({ pool, llmClient: llmClientStub });
     } catch (error) {
       skipSuite = true;
       console.warn('E2E тесты пропущены из-за недоступности PostgreSQL:', error.message);
@@ -82,6 +81,14 @@ describe('E2E: /chat-with-memory', () => {
     expect(response.status).toBe(200);
     expect(response.body.sessionId).toBe(sessionId);
     expect(response.body.response).toBe('E2E response');
+    expect(response.body.evalCount).toBe(256);
+    expect(response.body.llmDisabled).toBe(false);
+
+    expect(llmClientStub.generate).toHaveBeenCalledTimes(1);
+    expect(llmClientStub.generate).toHaveBeenCalledWith('user: Привет из e2e', {
+      model: 'deepseek-r1:70b',
+      options: {},
+    });
 
     const { rows } = await pool.query(
       'SELECT role, message_text, model_used FROM ai_sessions WHERE session_id = $1 ORDER BY created_at ASC',

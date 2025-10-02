@@ -3,20 +3,19 @@ const { createApp } = require('../../memory-service');
 
 describe('Memory service unit tests', () => {
   let poolMock;
-  let axiosMock;
+  let llmClientMock;
   let app;
 
   beforeEach(() => {
     poolMock = {
       query: jest.fn(),
     };
-    axiosMock = {
-      post: jest.fn(),
+    llmClientMock = {
+      generate: jest.fn(),
     };
     app = createApp({
       pool: poolMock,
-      axiosInstance: axiosMock,
-      ollamaBaseUrl: 'http://ollama.test',
+      llmClient: llmClientMock,
     });
   });
 
@@ -34,11 +33,10 @@ describe('Memory service unit tests', () => {
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
 
-    axiosMock.post.mockResolvedValue({
-      data: {
-        response: 'Привет! Чем могу помочь?',
-        eval_count: 128,
-      },
+    llmClientMock.generate.mockResolvedValue({
+      response: 'Привет! Чем могу помочь?',
+      evalCount: 128,
+      disabled: false,
     });
 
     const payload = {
@@ -57,14 +55,13 @@ describe('Memory service unit tests', () => {
     expect(response.body.sessionId).toBe(payload.sessionId);
     expect(response.body.model).toBe(payload.model);
     expect(response.body.contextUsed).toBe(false);
+    expect(response.body.evalCount).toBe(128);
+    expect(response.body.llmDisabled).toBe(false);
 
-    expect(axiosMock.post).toHaveBeenCalledWith('http://ollama.test/api/generate', {
+    expect(llmClientMock.generate).toHaveBeenCalledWith('user: Расскажи мне что-нибудь', {
       model: payload.model,
-      prompt: 'user: Расскажи мне что-нибудь',
-      stream: false,
       options: expect.objectContaining({
         temperature: 0.7,
-        top_p: 0.9,
       }),
     });
 
