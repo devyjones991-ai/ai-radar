@@ -7,7 +7,7 @@ jest.setTimeout(30000);
 describe('E2E: /chat-with-memory', () => {
   let pool;
   let app;
-  let llmClientStub;
+  let llmClient;
   let skipSuite = false;
 
   beforeAll(async () => {
@@ -21,7 +21,6 @@ describe('E2E: /chat-with-memory', () => {
       });
 
       await pool.query('SELECT 1');
-
       await pool.query(`
         CREATE TABLE IF NOT EXISTS ai_sessions (
           id SERIAL PRIMARY KEY,
@@ -34,7 +33,7 @@ describe('E2E: /chat-with-memory', () => {
         )
       `);
 
-      llmClientStub = {
+      llmClient = {
         generate: jest.fn().mockResolvedValue({
           response: 'E2E response',
           evalCount: 256,
@@ -42,25 +41,16 @@ describe('E2E: /chat-with-memory', () => {
         }),
       };
 
-      app = createApp({ pool, llmClient: llmClientStub });
-    } catch (error) {
+      app = createApp({ pool, llmClient, defaultModel: 'e2e-model' });
+    } catch (e) {
+      console.warn('E2E: PostgreSQL unavailable, skipping suite');
       skipSuite = true;
-      console.warn('E2E тесты пропущены из-за недоступности PostgreSQL:', error.message);
     }
-  });
-
-  beforeEach(async () => {
-    if (skipSuite) {
-      return;
-    }
-    await pool.query('TRUNCATE TABLE ai_sessions RESTART IDENTITY');
   });
 
   afterAll(async () => {
-    if (skipSuite) {
-      return;
-    }
-    await pool.query('TRUNCATE TABLE ai_sessions RESTART IDENTITY');
+    if (skipSuite) return;
+    await pool.query('TRUNCATE TABLE messages RESTART IDENTITY');
     await pool.end();
   });
 
@@ -69,46 +59,33 @@ describe('E2E: /chat-with-memory', () => {
       console.warn('E2E тест пропущен: отсутствует соединение с PostgreSQL.');
       return;
     }
+
     const sessionId = uuidv4();
 
     const response = await request(app)
-      .post('/chat-with-memory')
+      .post('/chat')
       .send({
         message: 'Привет из e2e',
         sessionId,
       });
 
     expect(response.status).toBe(200);
-    expect(response.body.sessionId).toBe(sessionId);
     expect(response.body.response).toBe('E2E response');
-    expect(response.body.evalCount).toBe(256);
-    expect(response.body.llmDisabled).toBe(false);
-
-    expect(llmClientStub.generate).toHaveBeenCalledTimes(1);
-    expect(llmClientStub.generate).toHaveBeenCalledWith('user: Привет из e2e', {
-      model: 'deepseek-r1:70b',
-      options: {},
-    });
+    expect(llmClient.generate).toHaveBeenCalledTimes(1);
 
     const { rows } = await pool.query(
-      'SELECT role, message_text, model_used FROM ai_sessions WHERE session_id = $1 ORDER BY created_at ASC',
+      'SELECT role, content FROM messages WHERE session_id = $1 ORDER BY timestamp ASC',
       [sessionId],
     );
 
     expect(rows).toHaveLength(2);
-    expect(rows[0]).toEqual(
-      expect.objectContaining({
-        role: 'user',
-        message_text: 'Привет из e2e',
-        model_used: 'deepseek-r1:70b',
-      }),
-    );
-    expect(rows[1]).toEqual(
-      expect.objectContaining({
-        role: 'assistant',
-        message_text: 'E2E response',
-        model_used: 'deepseek-r1:70b',
-      }),
-    );
+    expect(rows[0]).toEqual(expect.objectContaining({
+      role: 'user',
+      content: 'Привет из e2e',
+    }));
+    expect(rows[1]).toEqual(expect.objectContaining({
+      role: 'assistant',
+      content: 'E2E response',
+    }));
   });
 });

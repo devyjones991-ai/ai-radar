@@ -16,6 +16,7 @@ describe('Memory service unit tests', () => {
     app = createApp({
       pool: poolMock,
       llmClient: llmClientMock,
+      defaultModel: 'test-model',
     });
   });
 
