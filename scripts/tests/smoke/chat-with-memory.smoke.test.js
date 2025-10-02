@@ -11,16 +11,14 @@ describe('Smoke: /chat-with-memory', () => {
         .mockResolvedValueOnce({ rows: [] }),
     };
 
-    const axiosStub = {
-      post: jest.fn().mockResolvedValue({
-        data: {
-          response: 'smoke-response',
-          eval_count: 10,
-        },
+    const llmStub = {
+      generate: jest.fn().mockResolvedValue({
+        response: 'smoke-response',
+        evalCount: 10,
       }),
     };
 
-    const app = createApp({ pool: poolStub, axiosInstance: axiosStub, ollamaBaseUrl: 'http://ollama.smoke' });
+    const app = createApp({ pool: poolStub, llm: llmStub });
 
     const response = await request(app)
       .post('/chat-with-memory')
