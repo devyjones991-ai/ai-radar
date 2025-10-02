@@ -60,7 +60,7 @@ services:
       - "host.docker.internal:host-gateway"
 
   ai-memory-service:
-    image: node:15-alpine
+    build: ../scripts
     container_name: ai-radar-memory
     restart: unless-stopped
     working_dir: /app
@@ -83,7 +83,12 @@ services:
         condition: service_healthy
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    command: ["sleep", "infinity"]  # Запустится позже
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
 
 volumes:
   postgres_data:
