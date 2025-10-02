@@ -1,23 +1,6 @@
 const fs = require('fs');
 const path = require('path');
 
-loadEnvFile();
-
-const express = require('express');
-const { Pool } = require('pg');
-const llmClient = require('./llm-client');
-
-const app = express();
-app.use(express.json());
-
-const pool = new Pool({
-  host: process.env.POSTGRES_HOST || 'postgres',
-  port: process.env.POSTGRES_PORT || 5432,
-  database: process.env.POSTGRES_DB,
-  user: process.env.POSTGRES_USER,
-  password: process.env.POSTGRES_PASSWORD,
-});
-
 function loadEnvFile() {
   const envFileName = process.env.NODE_ENV === 'test' ? '.env.test' : '.env';
   const envPath = path.resolve(__dirname, '..', envFileName);
@@ -46,6 +29,36 @@ function loadEnvFile() {
     process.env[key] = value;
   }
 }
+
+loadEnvFile();
+
+const express = require('express');
+const { Pool } = require('pg');
+const axios = require('axios');
+const llmClient = require('./llm-client');
+require('dotenv').config();
+
+const DEFAULT_POOL_CONFIG = {
+  host: process.env.POSTGRES_HOST ?? 'postgres',
+  port: process.env.POSTGRES_PORT ?? 5432,
+  database: process.env.POSTGRES_DB,
+  user: process.env.POSTGRES_USER,
+  password: process.env.POSTGRES_PASSWORD,
+};
+
+function createPool(overrides = {}) {
+  return new Pool({
+    ...DEFAULT_POOL_CONFIG,
+    ...overrides,
+  });
+}
+
+const app = express();
+app.use(express.json());
+
+const pool = createPool();
+
+const OLLAMA_URL = process.env.OLLAMA_BASE_URL ?? 'http://host.docker.internal:11434';
 
 async function getSessionContext(sessionId, limit = 10) {
   try {
@@ -106,14 +119,15 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3003;
 if (require.main === module) {
   app.listen(PORT, () => {
-    console.log(`AI Memory Service running on port ${PORT}`);
+    console.log(`Memory service listening on port ${PORT}`);
   });
 }
 
 module.exports = {
+  createPool,
   app,
   getSessionContext,
   saveMessage,

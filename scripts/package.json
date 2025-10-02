@@ -11,9 +11,13 @@
   },
   "scripts": {
     "start": "node memory-service.js",
-    "test": "NODE_ENV=test jest",
-    "lint": "eslint .",
-    "lint:fix": "eslint . --fix"
+    "lint": "eslint . --ext .js",
+    "lint:fix": "eslint . --fix",
+    "test": "npm run test:unit && npm run test:smoke && npm run test:e2e",
+    "test:unit": "jest --config jest.config.unit.cjs",
+    "test:smoke": "jest --config jest.config.smoke.cjs",
+    "test:e2e": "jest --config jest.config.e2e.cjs",
+    "test:connection": "node test-connection.js"
   },
   "devDependencies": {
     "eslint": "^8.57.0",

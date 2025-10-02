@@ -13,9 +13,9 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - TZ=${TZ}
     volumes:
-      - ./data/postgres:/var/lib/postgresql/data
-      - ./config/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
-      - ./logs:/var/log
+      - ../data/postgres:/var/lib/postgresql/data
+      - ../config/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ../logs:/var/log
     networks:
       - ai-radar-network
     healthcheck:
@@ -48,9 +48,9 @@ services:
     ports:
       - "${N8N_PORT}:5678"
     volumes:
-      - ./data/n8n:/home/node/.n8n
-      - ./workflows:/home/node/workflows
-      - ./logs:/home/node/logs
+      - ../data/n8n:/home/node/.n8n
+      - ../workflows:/home/node/workflows
+      - ../logs:/home/node/logs
     networks:
       - ai-radar-network
     depends_on:
@@ -60,10 +60,11 @@ services:
       - "host.docker.internal:host-gateway"
 
   ai-memory-service:
-    image: node:15-alpine
+    build: ../scripts
     container_name: ai-radar-memory
     restart: unless-stopped
     working_dir: /app
+    command: ["sh", "-c", "npm ci --only=production && npm run start"]
     environment:
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
@@ -75,9 +76,9 @@ services:
       - LLM_BASE_URL=${LLM_BASE_URL}
       - TZ=${TZ}
     volumes:
-      - ./scripts:/app
-      - ./data/ollama-memory:/app/data
-      - ./logs:/app/logs
+      - ../scripts:/app
+      - ../data/ollama-memory:/app/data
+      - ../logs:/app/logs
     networks:
       - ai-radar-network
     depends_on:
@@ -85,7 +86,12 @@ services:
         condition: service_healthy
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    command: ["sleep", "infinity"]  # Запустится позже
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
 
 volumes:
   postgres_data:
