@@ -3,19 +3,19 @@ const { createApp } = require('../../memory-service');
 
 describe('Memory service unit tests', () => {
   let poolMock;
-  let llmMock;
+  let llmClientMock;
   let app;
 
   beforeEach(() => {
     poolMock = {
       query: jest.fn(),
     };
-    llmMock = {
+    llmClientMock = {
       generate: jest.fn(),
     };
     app = createApp({
       pool: poolMock,
-      llm: llmMock,
+      llmClient: llmClientMock,
       defaultModel: 'test-model',
     });
   });
@@ -34,9 +34,10 @@ describe('Memory service unit tests', () => {
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
 
-    llmMock.generate.mockResolvedValue({
+    llmClientMock.generate.mockResolvedValue({
       response: 'Привет! Чем могу помочь?',
       evalCount: 128,
+      disabled: false,
     });
 
     const payload = {
@@ -55,8 +56,10 @@ describe('Memory service unit tests', () => {
     expect(response.body.sessionId).toBe(payload.sessionId);
     expect(response.body.model).toBe(payload.model);
     expect(response.body.contextUsed).toBe(false);
+    expect(response.body.evalCount).toBe(128);
+    expect(response.body.llmDisabled).toBe(false);
 
-    expect(llmMock.generate).toHaveBeenCalledWith('user: Расскажи мне что-нибудь', {
+    expect(llmClientMock.generate).toHaveBeenCalledWith('user: Расскажи мне что-нибудь', {
       model: payload.model,
       options: expect.objectContaining({
         temperature: 0.7,

@@ -11,18 +11,23 @@ describe('Smoke: /chat-with-memory', () => {
         .mockResolvedValueOnce({ rows: [] }),
     };
 
-    const llmStub = {
+    const llmClientStub = {
       generate: jest.fn().mockResolvedValue({
         response: 'smoke-response',
         evalCount: 10,
+        disabled: false,
       }),
     };
 
-    const app = createApp({ pool: poolStub, llm: llmStub });
+    const app = createApp({ pool: poolStub, llmClient: llmClientStub, defaultModel: 'test-model' });
 
     const response = await request(app)
       .post('/chat-with-memory')
-      .send({ message: 'ping', sessionId: 'smoke-session' });
+      .send({
+        message: 'ping',
+        sessionId: 'smoke-session',
+        options: { temperature: 0, top_p: 0 },
+      });
 
     expect(response.status).toBe(200);
     expect(response.body).toEqual(
@@ -30,7 +35,10 @@ describe('Smoke: /chat-with-memory', () => {
         response: 'smoke-response',
         sessionId: 'smoke-session',
         model: 'deepseek-r1:70b',
-      }),
+        contextUsed: false,
+        evalCount: 10,
+        llmDisabled: false,
+      })
     );
   });
 });
