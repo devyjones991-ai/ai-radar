@@ -7,7 +7,7 @@ jest.setTimeout(30000);
 describe('E2E: /chat-with-memory', () => {
   let pool;
   let app;
-  let axiosStub;
+  let llmStub;
   let skipSuite = false;
 
   beforeAll(async () => {
@@ -34,16 +34,14 @@ describe('E2E: /chat-with-memory', () => {
         )
       `);
 
-      axiosStub = {
-        post: jest.fn().mockResolvedValue({
-          data: {
-            response: 'E2E response',
-            eval_count: 256,
-          },
+      llmStub = {
+        generate: jest.fn().mockResolvedValue({
+          response: 'E2E response',
+          evalCount: 256,
         }),
       };
 
-      app = createApp({ pool, axiosInstance: axiosStub, ollamaBaseUrl: 'http://ollama.e2e' });
+      app = createApp({ pool, llm: llmStub, defaultModel: 'deepseek-r1:70b' });
     } catch (error) {
       skipSuite = true;
       console.warn('E2E тесты пропущены из-за недоступности PostgreSQL:', error.message);

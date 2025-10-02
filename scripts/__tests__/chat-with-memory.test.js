@@ -1,6 +1,5 @@
 const { test, mock } = require('node:test');
 const assert = require('node:assert/strict');
-const axios = require('axios');
 const pg = require('pg');
 
 function createMockResponse() {
@@ -23,19 +22,19 @@ test('chat-with-memory передает нулевые temperature и top_p в O
   mock.method(pg, 'Pool', function MockPool() {
     return { query: queryMock };
   });
-  const axiosPostMock = mock.method(axios, 'post', async () => ({
-    data: {
-      response: 'assistant response',
-      eval_count: 42,
-    },
-  }));
-
   process.env.NODE_ENV = 'test';
   const modulePath = require.resolve('../memory-service');
   delete require.cache[modulePath];
 
   try {
     const { chatWithMemoryHandler } = require('../memory-service');
+
+    const llmMock = {
+      generate: mock.fn(async () => ({
+        response: 'assistant response',
+        evalCount: 42,
+      })),
+    };
 
     const req = {
       body: {
@@ -49,13 +48,18 @@ test('chat-with-memory передает нулевые temperature и top_p в O
     };
     const res = createMockResponse();
 
-    await chatWithMemoryHandler(req, res);
+    const handler = chatWithMemoryHandler({
+      pool: { query: queryMock },
+      llmClient: llmMock,
+    });
+
+    await handler(req, res);
 
     assert.equal(res.statusCode, 200);
     assert.equal(res.body.response, 'assistant response');
     assert.equal(queryMock.mock.calls.length, 3);
 
-    const optionsArg = axiosPostMock.mock.calls[0].arguments[1].options;
+    const optionsArg = llmMock.generate.mock.calls[0].arguments[1].options;
     assert.equal(optionsArg.temperature, 0);
     assert.equal(optionsArg.top_p, 0);
   } finally {

@@ -34,9 +34,15 @@ loadEnvFile();
 
 const express = require('express');
 const { Pool } = require('pg');
-const axios = require('axios');
 const llmClient = require('./llm-client');
-require('dotenv').config();
+
+try {
+  require('dotenv').config();
+} catch (error) {
+  if (error.code !== 'MODULE_NOT_FOUND') {
+    throw error;
+  }
+}
 
 const DEFAULT_POOL_CONFIG = {
   host: process.env.POSTGRES_HOST ?? 'postgres',
@@ -53,71 +59,140 @@ function createPool(overrides = {}) {
   });
 }
 
-const app = express();
-app.use(express.json());
+const DEFAULT_MODEL = 'deepseek-r1:70b';
+const DEFAULT_CONTEXT_LIMIT = 10;
 
-const pool = createPool();
-
-const OLLAMA_URL = process.env.OLLAMA_BASE_URL ?? 'http://host.docker.internal:11434';
-
-async function getSessionContext(sessionId, limit = 10) {
-  try {
-    const result = await pool.query(
-      'SELECT role, message_text, model_used, created_at FROM ai_sessions WHERE session_id = $1 ORDER BY created_at DESC LIMIT $2',
-      [sessionId, limit]
-    );
-    return result.rows.reverse();
-  } catch (error) {
-    console.error('Error getting session context:', error);
-    return [];
+function createSessionStore(pool) {
+  if (!pool || typeof pool.query !== 'function') {
+    throw new Error('A valid PostgreSQL pool instance is required');
   }
-}
 
-async function saveMessage(sessionId, role, messageText, modelUsed = null, tokensUsed = null) {
-  try {
-    await pool.query(
-      'INSERT INTO ai_sessions (session_id, role, message_text, model_used, tokens_used) VALUES ($1, $2, $3, $4, $5)',
-      [sessionId, role, messageText, modelUsed, tokensUsed]
-    );
-  } catch (error) {
-    console.error('Error saving message:', error);
-  }
-}
-
-app.post('/chat-with-memory', async (req, res) => {
-  try {
-    const { message, sessionId = 'default', model = 'deepseek-r1:70b', options = {} } = req.body;
-
-    const context = await getSessionContext(sessionId);
-
-    let fullPrompt = '';
-    if (context.length > 0) {
-      fullPrompt = context.map(c => `${c.role}: ${c.message_text}`).join('\n') + '\n';
+  async function getSessionContext(sessionId, limit = DEFAULT_CONTEXT_LIMIT) {
+    try {
+      const result = await pool.query(
+        'SELECT role, message_text, model_used, created_at FROM ai_sessions WHERE session_id = $1 ORDER BY created_at DESC LIMIT $2',
+        [sessionId, limit]
+      );
+      return result.rows.reverse();
+    } catch (error) {
+      console.error('Error getting session context:', error);
+      return [];
     }
-    fullPrompt += `user: ${message}`;
-
-    const llmResult = await llmClient.generate(fullPrompt, { model, options });
-
-    await saveMessage(sessionId, 'user', message, model);
-    await saveMessage(sessionId, 'assistant', llmResult.response, model, llmResult.evalCount);
-
-    res.json({
-      response: llmResult.response,
-      sessionId: sessionId,
-      model: model,
-      contextUsed: context.length > 0,
-      llmDisabled: !!llmResult.disabled,
-      evalCount: llmResult.evalCount,
-    });
-  } catch (error) {
-    console.error('Error in chat-with-memory:', error);
-    res.status(500).json({ error: 'Failed to generate response' });
   }
-});
 
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
-});
+  async function saveMessage(sessionId, role, messageText, modelUsed = null, tokensUsed = null) {
+    try {
+      await pool.query(
+        'INSERT INTO ai_sessions (session_id, role, message_text, model_used, tokens_used) VALUES ($1, $2, $3, $4, $5)',
+        [sessionId, role, messageText, modelUsed, tokensUsed]
+      );
+    } catch (error) {
+      console.error('Error saving message:', error);
+    }
+  }
+
+  return { getSessionContext, saveMessage };
+}
+
+function chatWithMemoryHandler({
+  pool,
+  llmClient: llm,
+  defaultModel = DEFAULT_MODEL,
+  contextLimit = DEFAULT_CONTEXT_LIMIT,
+  getSessionContext,
+  saveMessage,
+} = {}) {
+  if (!pool) {
+    throw new Error('pool is required for chatWithMemoryHandler');
+  }
+  if (!llm || typeof llm.generate !== 'function') {
+    throw new Error('llmClient with a generate method is required');
+  }
+
+  const sessionStore =
+    getSessionContext && saveMessage
+      ? { getSessionContext, saveMessage }
+      : createSessionStore(pool);
+
+  const resolveContext = sessionStore.getSessionContext;
+  const persistMessage = sessionStore.saveMessage;
+
+  return async function chatWithMemory(req, res) {
+    try {
+      const {
+        message,
+        sessionId = 'default',
+        model = defaultModel,
+        options = {},
+      } = req.body || {};
+
+      const context = await resolveContext(sessionId, contextLimit);
+
+      let fullPrompt = '';
+      if (context.length > 0) {
+        fullPrompt = context.map(c => `${c.role}: ${c.message_text}`).join('\n') + '\n';
+      }
+      fullPrompt += `user: ${message}`;
+
+      const llmResult = await llm.generate(fullPrompt, { model, options });
+
+      await persistMessage(sessionId, 'user', message, model);
+      await persistMessage(sessionId, 'assistant', llmResult.response, model, llmResult.evalCount);
+
+      res.json({
+        response: llmResult.response,
+        sessionId,
+        model,
+        contextUsed: context.length > 0,
+        llmDisabled: !!llmResult.disabled,
+        evalCount: llmResult.evalCount,
+      });
+    } catch (error) {
+      console.error('Error in chat-with-memory:', error);
+      res.status(500).json({ error: 'Failed to generate response' });
+    }
+  };
+}
+
+function createApp({
+  pool = createPool(),
+  llm = llmClient,
+  defaultModel = DEFAULT_MODEL,
+  contextLimit = DEFAULT_CONTEXT_LIMIT,
+} = {}) {
+  const app = express();
+  app.use(express.json());
+
+  const sessionStore = createSessionStore(pool);
+
+  app.post(
+    '/chat-with-memory',
+    chatWithMemoryHandler({
+      pool,
+      llmClient: llm,
+      defaultModel,
+      contextLimit,
+      getSessionContext: sessionStore.getSessionContext,
+      saveMessage: sessionStore.saveMessage,
+    })
+  );
+
+  app.get('/health', (req, res) => {
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  });
+
+  app.pool = pool;
+  app.getSessionContext = sessionStore.getSessionContext;
+  app.saveMessage = sessionStore.saveMessage;
+
+  return app;
+}
+
+const app = createApp();
+
+const { pool } = app;
+const getSessionContext = app.getSessionContext;
+const saveMessage = app.saveMessage;
 
 const PORT = process.env.PORT || 3003;
 if (require.main === module) {
@@ -128,6 +203,8 @@ if (require.main === module) {
 
 module.exports = {
   createPool,
+  createApp,
+  chatWithMemoryHandler,
   app,
   getSessionContext,
   saveMessage,
