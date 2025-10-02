@@ -1,0 +1,9 @@
+{
+  email devyjones991@gmail.com
+  admin off
+}
+
+leadharvester.duckdns.org {
+  encode gzip
+  reverse_proxy n8n:5678
+}

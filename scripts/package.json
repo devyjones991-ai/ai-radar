@@ -1,0 +1,16 @@
+{
+  "name": "ai-radar-memory-service",
+  "version": "1.0.0",
+  "description": "AI Memory Service for AI-Radar project",
+  "main": "memory-service.js",
+  "dependencies": {
+    "pg": "^8.11.3",
+    "express": "^4.18.2",
+    "axios": "^1.6.0",
+    "uuid": "^9.0.1"
+  },
+  "scripts": {
+    "start": "node memory-service.js",
+    "test": "node test-connection.js"
+  }
+}

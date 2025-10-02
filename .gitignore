@@ -1,0 +1,25 @@
+# Environment files
+.env
+
+# Data directories
+data/
+n8n_data/
+logs/
+database/
+
+# Node modules
+node_modules/
+npm-debug.log*
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Backups
+*.bak
+ai-radar.bak/
+
+# IDE
+.vscode/
+.idea/
