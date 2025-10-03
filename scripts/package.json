@@ -13,10 +13,11 @@
     "start": "node memory-service.js",
     "lint": "eslint . --ext .js",
     "lint:fix": "eslint . --fix",
-    "test": "npm run test:unit && npm run test:smoke && npm run test:e2e",
+    "test": "npm run test:unit && npm run test:smoke && npm run test:e2e && npm run test:integration",
     "test:unit": "jest --config jest.config.unit.cjs",
     "test:smoke": "jest --config jest.config.smoke.cjs",
     "test:e2e": "jest --config jest.config.e2e.cjs",
+    "test:integration": "jest --config jest.config.integration.cjs",
     "test:connection": "node test-connection.js"
   },
   "devDependencies": {
