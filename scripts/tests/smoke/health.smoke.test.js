@@ -1,11 +1,11 @@
 const request = require('supertest');
-const { createApp } = require('../../memory-service');
+const { createService } = require('../../memory-service');
 
 describe('Smoke: /health', () => {
   it('возвращает статус ok и метку времени', async () => {
     const poolStub = { query: jest.fn() };
     const llmClient = { generate: jest.fn() };
-    const app = createApp({ pool: poolStub, llmClient });
+    const { app } = createService({ pool: poolStub, llmClient });
 
     const response = await request(app).get('/health');
 
@@ -14,7 +14,7 @@ describe('Smoke: /health', () => {
       expect.objectContaining({
         status: 'ok',
         timestamp: expect.any(String),
-      }),
+      })
     );
   });
 });

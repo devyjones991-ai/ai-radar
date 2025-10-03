@@ -1,14 +1,15 @@
 const request = require('supertest');
 const { v4: uuidv4 } = require('uuid');
-const { createApp, createPool } = require('../../memory-service');
+const { createService, createPool } = require('../../memory-service');
 
 jest.setTimeout(30000);
 
-describe('E2E: /chat-with-memory', () => {
+describe('E2E: /chat', () => {
   let pool;
   let app;
   let llmClient;
   let skipSuite = false;
+  const createdSessions = new Set();
 
   beforeAll(async () => {
     try {
@@ -38,10 +39,11 @@ describe('E2E: /chat-with-memory', () => {
           response: 'E2E response',
           evalCount: 256,
           disabled: false,
+          model: 'e2e-model',
         }),
       };
 
-      app = createApp({ pool, llmClient, defaultModel: 'e2e-model' });
+      ({ app } = createService({ pool, llmClient, defaultModel: 'e2e-model' }));
     } catch (e) {
       console.warn('E2E: PostgreSQL unavailable, skipping suite');
       skipSuite = true;
@@ -49,8 +51,12 @@ describe('E2E: /chat-with-memory', () => {
   });
 
   afterAll(async () => {
-    if (skipSuite) return;
-    await pool.query('TRUNCATE TABLE messages RESTART IDENTITY');
+    if (skipSuite || !pool) return;
+    if (createdSessions.size > 0) {
+      await pool.query('DELETE FROM ai_sessions WHERE session_id = ANY($1)', [
+        Array.from(createdSessions),
+      ]);
+    }
     await pool.end();
   });
 
@@ -61,6 +67,7 @@ describe('E2E: /chat-with-memory', () => {
     }
 
     const sessionId = uuidv4();
+    createdSessions.add(sessionId);
 
     const response = await request(app)
       .post('/chat')
@@ -71,21 +78,38 @@ describe('E2E: /chat-with-memory', () => {
 
     expect(response.status).toBe(200);
     expect(response.body.response).toBe('E2E response');
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        sessionId,
+        model: 'e2e-model',
+        contextUsed: false,
+        evalCount: 256,
+        llmDisabled: false,
+      })
+    );
     expect(llmClient.generate).toHaveBeenCalledTimes(1);
 
     const { rows } = await pool.query(
-      'SELECT role, content FROM messages WHERE session_id = $1 ORDER BY timestamp ASC',
-      [sessionId],
+      `SELECT role, message_text, model_used, tokens_used
+         FROM ai_sessions WHERE session_id = $1 ORDER BY created_at ASC`,
+      [sessionId]
     );
 
     expect(rows).toHaveLength(2);
-    expect(rows[0]).toEqual(expect.objectContaining({
-      role: 'user',
-      content: 'Привет из e2e',
-    }));
-    expect(rows[1]).toEqual(expect.objectContaining({
-      role: 'assistant',
-      content: 'E2E response',
-    }));
+    expect(rows[0]).toEqual(
+      expect.objectContaining({
+        role: 'user',
+        message_text: 'Привет из e2e',
+        model_used: 'e2e-model',
+      })
+    );
+    expect(rows[1]).toEqual(
+      expect.objectContaining({
+        role: 'assistant',
+        message_text: 'E2E response',
+        model_used: 'e2e-model',
+        tokens_used: 256,
+      })
+    );
   });
 });
