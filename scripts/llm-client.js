@@ -26,7 +26,7 @@ function resolveBaseUrl() {
   return process.env.LLM_BASE_URL || 'http://host.docker.internal:11434';
 }
 
-async function generate(prompt, { model = DEFAULT_MODEL, options: llmOptions = {} } = {}) {
+async function generate(prompt, { model = DEFAULT_MODEL, options: llmOptions = {}, context } = {}) {
   if (!prompt) {
     throw new Error('Prompt is required');
   }
@@ -46,6 +46,10 @@ async function generate(prompt, { model = DEFAULT_MODEL, options: llmOptions = {
     stream: false,
     options: { ...DEFAULT_OPTIONS, ...llmOptions },
   };
+
+  if (context !== undefined) {
+    payload.context = context;
+  }
 
   const baseUrl = resolveBaseUrl();
   const { data } = await axios.post(`${baseUrl}/api/generate`, payload);

@@ -66,14 +66,21 @@ function createService({ pool: providedPool, llmClient: providedLlmClient } = {}
   });
 
   app.post('/chat', async (req, res) => {
-    const { sessionId, message } = req.body;
+    const { sessionId, message, model, options } = req.body;
     if (!sessionId || !message) {
       return res.status(400).json({ error: 'sessionId and message are required' });
     }
     try {
       await saveMessage(sessionId, 'user', message);
       const context = await getSessionContext(sessionId);
-      const { content } = await activeLlmClient.generate({ prompt: message, context });
+      const generationConfig = { context };
+      if (model !== undefined) {
+        generationConfig.model = model;
+      }
+      if (options !== undefined) {
+        generationConfig.options = options;
+      }
+      const { content } = await activeLlmClient.generate(message, generationConfig);
       await saveMessage(sessionId, 'assistant', content);
       res.status(200).json({ response: content });
     } catch (error) {

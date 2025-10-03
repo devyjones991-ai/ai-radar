@@ -57,14 +57,39 @@ describe('llm-client', () => {
 
     axios.post.mockResolvedValueOnce({ data: { response: 'Real response', eval_count: 123 } });
 
-    const result = await client.generate('production prompt', { model: 'prod-model', options: { temperature: 0.7 } });
+    const context = [
+      { role: 'user', content: 'Hi there' },
+      { role: 'assistant', content: 'Hello!' },
+    ];
+
+    const result = await client.generate('production prompt', {
+      model: 'prod-model',
+      options: { temperature: 0.7 },
+      context,
+    });
 
     expect(axios.post).toHaveBeenCalledWith('http://llm.example/api/generate', {
       model: 'prod-model',
       prompt: 'production prompt',
       stream: false,
       options: { temperature: 0.7, top_p: 0.9 },
+      context,
     });
     expect(result).toEqual({ response: 'Real response', evalCount: 123, model: 'prod-model', mode: 'prod' });
+  });
+
+  it('не добавляет контекст в payload, если он не передан', async () => {
+    process.env.LLM_ENABLED = 'true';
+    process.env.LLM_MODE = 'prod';
+    process.env.LLM_BASE_URL = 'http://llm.example';
+
+    const client = loadClient();
+
+    axios.post.mockResolvedValueOnce({ data: { response: 'Без контекста', eval_count: 7 } });
+
+    await client.generate('без контекста', { model: 'prod-model' });
+
+    const payload = axios.post.mock.calls[0][1];
+    expect(payload).not.toHaveProperty('context');
   });
 });
