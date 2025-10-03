@@ -77,54 +77,85 @@ function createPool(options = {}) {
     password: process.env.POSTGRES_PASSWORD,
   };
 
-  const mergedConfig = sanitizeConfig({ ...envConfig, ...restOptions });
+  const sanitized = sanitizeConfig(envConfig);
+  const hasConnection = hasConnectionConfig(sanitized);
 
-  if (hasConnectionConfig(mergedConfig)) {
-    return new Pool(mergedConfig);
-  }
-
-  const envConnectionString = process.env.DATABASE_URL;
-  if (envConnectionString) {
+  if (hasConnection) {
     const additionalOptions = pickAdditionalOptions(restOptions);
-    return new Pool({ connectionString: envConnectionString, ...additionalOptions });
+    return new Pool({ ...sanitized, ...additionalOptions });
   }
 
-  const additionalOptions = sanitizeConfig(restOptions);
-  return new Pool(additionalOptions);
+  const fallbackConnectionString = process.env.DATABASE_URL;
+  if (fallbackConnectionString) {
+    const additionalOptions = pickAdditionalOptions(restOptions);
+    return new Pool({ connectionString: fallbackConnectionString, ...additionalOptions });
+  }
+
+  throw new Error('No database configuration found');
 }
 
 const pool = createPool();
 
-async function chatWithMemoryHandler(sessionId, userMessage, activePool, activeLlmClient, model = 'grok-beta') {
-  const sessionContext = await getSessionContext(sessionId, activePool);
-  const response = await activeLlmClient.chatWithContext(sessionContext, userMessage, { model });
-  await saveMessage(sessionId, 'user', userMessage, activePool);
-  await saveMessage(sessionId, 'assistant', response, activePool);
-  return response;
+function formatMessagesForPrompt(messages, latestUserMessage) {
+  const fullContext = latestUserMessage ? [...messages, latestUserMessage] : messages;
+  return fullContext.map(({ role, message_text: text }) => `${role}: ${text}`).join('\n');
 }
 
-async function getSessionContext(sessionId, activePool) {
-  const res = await activePool.query(
-    'SELECT role, content FROM memory_service WHERE session_id = $1 ORDER BY timestamp ASC',
-    [sessionId]
-  );
-  return res.rows.map(r => ({ role: r.role, content: r.content }));
+async function getSessionContext(sessionId, limit = 10) {
+  try {
+    const result = await pool.query(
+      `SELECT role, message_text, model_used, tokens_used, created_at
+       FROM ai_sessions
+       WHERE session_id = $1
+       ORDER BY created_at DESC
+       LIMIT $2`,
+      [sessionId, limit]
+    );
+    return result.rows.reverse();
+  } catch (error) {
+    console.error('Error getting session context:', error);
+    return [];
+  }
 }
 
-async function saveMessage(sessionId, role, content, activePool) {
-  await activePool.query(
-    'INSERT INTO memory_service (session_id, role, content) VALUES ($1, $2, $3)',
-    [sessionId, role, content]
-  );
+async function saveMessage(sessionId, role, messageText, modelUsed = null, tokensUsed = null) {
+  try {
+    await pool.query(
+      `INSERT INTO ai_sessions (session_id, role, message_text, model_used, tokens_used)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [sessionId, role, messageText, modelUsed, tokensUsed]
+    );
+  } catch (error) {
+    console.error('Error saving message:', error);
+    throw error;
+  }
 }
 
-function createApp({ pool: providedPool, llmClient: providedLlmClient, defaultModel } = {}) {
+async function chatWithMemoryHandler(sessionId, userMessage, activePool, activeLlmClient, effectiveModel) {
+  const context = await getSessionContext(sessionId, 10);
+  const prompt = formatMessagesForPrompt(context, { role: 'user', message_text: userMessage });
+
+  const llmResponse = await activeLlmClient.generate({
+    model: effectiveModel,
+    prompt: prompt,
+    stream: false,
+  });
+
+  const assistantMessage = llmResponse.response;
+
+  await saveMessage(sessionId, 'user', userMessage, effectiveModel, null);
+  await saveMessage(sessionId, 'assistant', assistantMessage, effectiveModel, null);
+
+  return assistantMessage;
+}
+
+function createApp({ pool: activePool = pool, llmClient: activeLlmClient = llmClient, defaultModel = null } = {}) {
   const app = express();
-
   app.use(express.json());
 
-  const activePool = providedPool ?? pool;
-  const activeLlmClient = providedLlmClient ?? llmClient;
+  app.get('/health', (req, res) => {
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  });
 
   app.post('/chat', async (req, res) => {
     try {
@@ -144,8 +175,87 @@ function createApp({ pool: providedPool, llmClient: providedLlmClient, defaultMo
   return app;
 }
 
+function createService({ pool: providedPool, llmClient: providedLlmClient, defaultModel } = {}) {
+  const app = express();
+  app.use(express.json());
+
+  const servicePool = providedPool ?? createPool();
+  const activeLlmClient = providedLlmClient ?? llmClient;
+  const fallbackModel = defaultModel || process.env.LLM_DEFAULT_MODEL || 'deepseek-r1:70b';
+
+  async function getSessionContext(sessionId, limit = 10) {
+    try {
+      const result = await servicePool.query(
+        `SELECT role, message_text, model_used, tokens_used, created_at
+         FROM ai_sessions
+         WHERE session_id = $1
+         ORDER BY created_at DESC
+         LIMIT $2`,
+        [sessionId, limit]
+      );
+      return result.rows.reverse();
+    } catch (error) {
+      console.error('Error getting session context:', error);
+      return [];
+    }
+  }
+
+  async function saveMessage(sessionId, role, messageText, modelUsed = null, tokensUsed = null) {
+    try {
+      await servicePool.query(
+        `INSERT INTO ai_sessions (session_id, role, message_text, model_used, tokens_used)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [sessionId, role, messageText, modelUsed, tokensUsed]
+      );
+    } catch (error) {
+      console.error('Error saving message:', error);
+      throw error;
+    }
+  }
+
+  async function chatWithMemoryHandler(sessionId, userMessage) {
+    const context = await getSessionContext(sessionId, 10);
+    const prompt = formatMessagesForPrompt(context, { role: 'user', message_text: userMessage });
+
+    const llmResponse = await activeLlmClient.generate({
+      model: fallbackModel,
+      prompt: prompt,
+      stream: false,
+    });
+
+    const assistantMessage = llmResponse.response;
+
+    await saveMessage(sessionId, 'user', userMessage, fallbackModel, null);
+    await saveMessage(sessionId, 'assistant', assistantMessage, fallbackModel, null);
+
+    return assistantMessage;
+  }
+
+  app.get('/health', (req, res) => {
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  });
+
+  app.post('/chat', async (req, res) => {
+    try {
+      const { session_id: sessionId, message, model } = req.body;
+      if (!sessionId || !message) {
+        return res.status(400).json({ error: 'session_id and message are required' });
+      }
+      const effectiveModel = model || fallbackModel;
+      const response = await chatWithMemoryHandler(sessionId, message);
+      res.json({ response });
+    } catch (err) {
+      console.error('Error in /chat:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  return { app, pool: servicePool, getSessionContext, saveMessage };
+}
+
 module.exports = {
   createApp,
+  createService,
   chatWithMemoryHandler,
   getSessionContext,
   saveMessage,

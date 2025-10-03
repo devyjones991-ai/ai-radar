@@ -6,36 +6,46 @@ describe('Smoke: /chat', () => {
     const poolStub = {
       query: jest
         .fn()
-        .mockResolvedValueOnce({})
         .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [] }),
+        .mockResolvedValueOnce()
+        .mockResolvedValueOnce(),
     };
 
     const llmClientStub = {
       generate: jest.fn().mockResolvedValue({
-        content: 'smoke-response',
+        response: 'smoke-response',
+        evalCount: 10,
+        disabled: false,
+        model: 'smoke-model',
       }),
     };
 
-    const { app } = createService({ pool: poolStub, llmClient: llmClientStub });
-    const server = app.listen(0);
+    const { app } = createService({ pool: poolStub, llmClient: llmClientStub, defaultModel: 'smoke-model' });
 
-    try {
-      const response = await request(server)
-        .post('/chat')
-        .send({
-          message: 'ping',
-          sessionId: 'smoke-session',
-        });
-
-      expect(response.status).toBe(200);
-      expect(response.body).toEqual({ response: 'smoke-response' });
-      expect(llmClientStub.generate).toHaveBeenCalledWith({
-        prompt: 'ping',
-        context: [],
+    const response = await request(app)
+      .post('/chat')
+      .send({
+        message: 'ping',
+        sessionId: 'smoke-session',
+        options: { temperature: 0, top_p: 0 },
       });
-    } finally {
-      await new Promise(resolve => server.close(resolve));
-    }
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        response: 'smoke-response',
+        sessionId: 'smoke-session',
+        model: 'smoke-model',
+        contextUsed: false,
+        evalCount: 10,
+        llmDisabled: false,
+      })
+    );
+
+    expect(llmClientStub.generate).toHaveBeenCalledWith('user: ping', {
+      model: 'smoke-model',
+      options: { temperature: 0, top_p: 0 },
+    });
+    expect(poolStub.query).toHaveBeenCalledTimes(3);
   });
 });

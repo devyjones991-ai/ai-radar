@@ -1,23 +1,34 @@
 const request = require('supertest');
-const { createApp } = require('../../memory-service');
+const { createService } = require('../../memory-service');
 
 describe('Memory service unit tests', () => {
   let poolMock;
   let llmClientMock;
+  let service;
   let app;
 
   beforeEach(() => {
     poolMock = {
-      query: jest.fn(),
+      query: jest
+        .fn()
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce()
+        .mockResolvedValueOnce(),
     };
     llmClientMock = {
-      generate: jest.fn(),
+      generate: jest.fn().mockResolvedValue({
+        response: 'Привет! Чем могу помочь?',
+        evalCount: 128,
+        disabled: false,
+        model: 'test-model',
+      }),
     };
-    app = createApp({
+    service = createService({
       pool: poolMock,
       llmClient: llmClientMock,
       defaultModel: 'test-model',
     });
+    app = service.app;
   });
 
   it('возвращает успешный ответ на /health', async () => {
@@ -28,18 +39,7 @@ describe('Memory service unit tests', () => {
     expect(response.body).toHaveProperty('timestamp');
   });
 
-  it('формирует запрос к Ollama и сохраняет сообщения', async () => {
-    poolMock.query
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [] });
-
-    llmClientMock.generate.mockResolvedValue({
-      response: 'Привет! Чем могу помочь?',
-      evalCount: 128,
-      disabled: false,
-    });
-
+  it('формирует запрос к LLM и сохраняет сообщения', async () => {
     const payload = {
       message: 'Расскажи мне что-нибудь',
       sessionId: 'unit-test-session',
@@ -49,7 +49,7 @@ describe('Memory service unit tests', () => {
       },
     };
 
-    const response = await request(app).post('/chat-with-memory').send(payload);
+    const response = await request(app).post('/chat').send(payload);
 
     expect(response.status).toBe(200);
     expect(response.body.response).toBe('Привет! Чем могу помочь?');
@@ -69,8 +69,18 @@ describe('Memory service unit tests', () => {
     expect(poolMock.query).toHaveBeenCalledTimes(3);
     expect(poolMock.query).toHaveBeenNthCalledWith(
       1,
-      'SELECT role, message_text, model_used, created_at FROM ai_sessions WHERE session_id = $1 ORDER BY created_at DESC LIMIT $2',
-      [payload.sessionId, 10],
+      expect.stringContaining('SELECT role, message_text, model_used, tokens_used, created_at'),
+      [payload.sessionId, 10]
+    );
+    expect(poolMock.query).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining('INSERT INTO ai_sessions'),
+      [payload.sessionId, 'user', payload.message, payload.model, null]
+    );
+    expect(poolMock.query).toHaveBeenNthCalledWith(
+      3,
+      expect.stringContaining('INSERT INTO ai_sessions'),
+      [payload.sessionId, 'assistant', 'Привет! Чем могу помочь?', payload.model, 128]
     );
   });
 });
