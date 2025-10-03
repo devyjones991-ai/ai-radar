@@ -1,121 +1,97 @@
-# AI Radar
-
-[![CI](https://img.shields.io/badge/CI-GitHub%20Actions-blue.svg)](#настройка-ci)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-![npm version](https://img.shields.io/badge/npm-1.0.0-orange.svg)
-![Docker image](https://img.shields.io/badge/docker-n8n--latest-0db7ed.svg)
-
-## Назначение проекта
-AI Radar объединяет n8n, PostgreSQL и внутренний Memory Service для построения цепочек обработки запросов и хранения истории взаимодействий. Инфраструктура в `infra/` и конфигурация в `config/` позволяют быстро развернуть стек сервиса, а Node.js-приложение в `scripts/` отвечает за API для работы с памятью и интеграцию с LLM.
-
-## Минимальные требования
-- **Операционная система:** Linux, macOS или Windows с поддержкой Docker Desktop.
-- **Docker:** версия 24.0+ и плагин Docker Compose 2.20+.
-- **Node.js:** 18 LTS или новее для локального запуска памяти.
-- **npm:** 9.0+ (соответствует Node.js 18) для управления зависимостями `scripts/`.
-- **Дополнительно:** доступ к сети для загрузки образов Docker Hub и npm-пакетов.
-
-## Структура каталогов
-```text
-.
-├── .env.example
-├── .env.test
-├── .github/
-│   └── workflows/
-│       └── ci.yml
-├── LICENSE
-├── README.md
-├── config/
-│   └── postgres/
-│       └── init.sql
-├── docker-compose.test.yml
-├── infra/
-│   ├── Caddyfile
-│   └── docker-compose.yml
-└── scripts/
-    ├── Dockerfile
-    ├── __tests__/
-    │   └── chat-with-memory.test.js
-    ├── eslint.config.cjs
-    ├── jest.config.base.cjs
-    ├── jest.config.e2e.cjs
-    ├── jest.config.smoke.cjs
-    ├── jest.config.unit.cjs
-    ├── llm-client.js
-    ├── llm-client.test.js
-    ├── memory-service.js
-    ├── memory-service.test.js
-    ├── package-lock.json
-    ├── package.json
-    ├── test-connection.js
-    └── tests/
-        └── ...
+71
+ 
 ```
-
-## Локальный запуск
-### Вариант 1. Docker Compose
-1. Скопируйте переменные окружения и при необходимости скорректируйте их:
-   ```bash
-   cp .env.example .env
-   ```
-2. Перейдите в каталог инфраструктуры и запустите стек:
-   ```bash
-   cd infra
-   docker compose --env-file ../.env up -d --build
-   ```
-3. Дождитесь, пока сервисы пройдут health-check (`ai-radar-postgres`, `ai-radar-n8n`, `ai-radar-memory`). Проверить состояние можно командой `docker compose ps`.
-4. N8N будет доступен по адресу `http://<N8N_HOST>:<N8N_PORT>`, API памяти — на `http://localhost:3000` (переопределяется переменными окружения).
-5. Остановите и очистите ресурсы по завершении работы:
-   ```bash
-   docker compose down --volumes
-   ```
-
+72
+​
+73
 ### Вариант 2. NPM для Memory Service
+74
 1. Убедитесь, что PostgreSQL запущен и доступен согласно переменным окружения (`.env.example`). Удобнее всего использовать Docker Compose из предыдущего пункта.
+75
 2. Установите зависимости:
-   ```bash
-   cd scripts
-   npm ci
-   ```
+76
+ ```bash
+77
+ cd scripts
+78
+ npm ci
+79
+ ```
+80
 3. Проверьте соединение с базой данных:
-   ```bash
-   npm run test:connection
-   ```
+81
+ ```bash
+82
+ npm run test:connection
+83
+ ```
+84
 4. Запустите сервис локально:
-   ```bash
-   npm run start
-   ```
+85
+ ```bash
+86
+ npm run start
+87
+ ```
+88
 5. Дополнительно можно выполнить тесты (`npm test`) перед коммитом.
-
+89
+​
+90
+## Инфраструктурные проверки
+91
+Для автоматической проверки готовности стека добавлен сценарий `infra/tests/stack-health-check.sh`.
+92
+Он поднимает docker-compose из `infra/docker-compose.yml`, ожидает статуса `healthy` для
+93
+`postgres`, `n8n` и `ai-memory-service`, а затем останавливает и очищает ресурсы (`docker compose down --volumes --remove-orphans`).
+94
+​
+95
+### Ограничения и переменные окружения
+96
+- Таймаут ожидания по умолчанию составляет 300 секунд и задаётся переменной `STACK_HEALTH_TIMEOUT`.
+97
+- Интервал между проверками — 5 секунд (`STACK_HEALTH_INTERVAL`).
+98
+- Список контролируемых сервисов задаётся через `STACK_HEALTH_SERVICES`.
+99
+- Для запуска требуется установленный Docker и плагин Docker Compose 2.20+.
+100
+- По умолчанию используется файл переменных `.env.test`; его можно переопределить через `ENV_FILE`.
+101
+​
+102
+Подробнее см. `infra/tests/README.md`.
+103
+​
+104
 ### Интеграционные тесты
+105
 - **Назначение.** Проверяют, что скрипт инициализации `config/postgres/init.sql` создаёт все таблицы и индексы в «живой» базе.
+106
 - **Требования.** Локально и в CI должен быть доступен Docker с правами на запуск контейнеров. Тест сам разворачивает временный `postgres:16-alpine` и очищает его после выполнения.
+107
 - **Локальный запуск.**
+108
   ```bash
+109
   cd scripts
+110
   npm run test:integration
+111
   ```
+112
 - **Полный прогон.** Команда `npm test` теперь запускает юнит-, смоук-, e2e- и интеграционные тесты последовательно.
+113
 - **CI.** Для GitHub Actions используйте runner `ubuntu-latest` (Docker доступен по умолчанию) и добавьте шаг `npm run test:integration` либо общий `npm test`.
-
+114
+​
+115
 ## Сервисы и ссылки
+116
 ### Docker Hub
+117
 - [postgres:15-alpine](https://hub.docker.com/_/postgres)
+118
 - [n8nio/n8n:latest](https://hub.docker.com/r/n8nio/n8n)
-
-### npm
-- [express](https://www.npmjs.com/package/express)
-- [pg](https://www.npmjs.com/package/pg)
-- [axios](https://www.npmjs.com/package/axios)
-
-### Telegram-демо
-- [AI Radar Demo Bot](https://t.me/ai_radar_demo_bot)
-
-### Веб-сайт
-- [AI Radar](https://ai-radar.example.com)
-
-## Лицензия
-Проект распространяется по лицензии [MIT](LICENSE). Ознакомьтесь с условиями перед использованием.
-
-## Настройка CI
-В репозитории настроен workflow GitHub Actions (`.github/workflows/ci.yml`), который прогоняет тесты на pull request и при push в `main`/`master`.
