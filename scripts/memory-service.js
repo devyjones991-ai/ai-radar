@@ -86,3 +86,12 @@ function createService({ pool: providedPool, llmClient: providedLlmClient } = {}
 }
 
 module.exports = { createService, createPool };
+
+if (require.main === module) {
+  const { app } = createService();
+  const port = process.env.PORT || 3000;
+
+  app.listen(port, () => {
+    console.log(`Memory service listening on port ${port}`);
+  });
+}

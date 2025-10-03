@@ -1,44 +1,41 @@
 const request = require('supertest');
-const { createApp } = require('../../memory-service');
+const { createService } = require('../../memory-service');
 
-describe('Smoke: /chat-with-memory', () => {
+describe('Smoke: /chat', () => {
   it('возвращает корректный JSON ответ', async () => {
     const poolStub = {
       query: jest
         .fn()
-        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({})
         .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: [] }),
     };
 
     const llmClientStub = {
       generate: jest.fn().mockResolvedValue({
-        response: 'smoke-response',
-        evalCount: 10,
-        disabled: false,
+        content: 'smoke-response',
       }),
     };
 
-    const app = createApp({ pool: poolStub, llmClient: llmClientStub, defaultModel: 'test-model' });
+    const { app } = createService({ pool: poolStub, llmClient: llmClientStub });
+    const server = app.listen(0);
 
-    const response = await request(app)
-      .post('/chat-with-memory')
-      .send({
-        message: 'ping',
-        sessionId: 'smoke-session',
-        options: { temperature: 0, top_p: 0 },
+    try {
+      const response = await request(server)
+        .post('/chat')
+        .send({
+          message: 'ping',
+          sessionId: 'smoke-session',
+        });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ response: 'smoke-response' });
+      expect(llmClientStub.generate).toHaveBeenCalledWith({
+        prompt: 'ping',
+        context: [],
       });
-
-    expect(response.status).toBe(200);
-    expect(response.body).toEqual(
-      expect.objectContaining({
-        response: 'smoke-response',
-        sessionId: 'smoke-session',
-        model: 'deepseek-r1:70b',
-        contextUsed: false,
-        evalCount: 10,
-        llmDisabled: false,
-      })
-    );
+    } finally {
+      await new Promise(resolve => server.close(resolve));
+    }
   });
 });
