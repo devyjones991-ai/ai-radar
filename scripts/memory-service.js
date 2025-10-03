@@ -37,32 +37,22 @@ const llmClient = require('./llm-client');
 
 const CONNECTION_KEYS = ['host', 'port', 'database', 'user', 'password'];
 
-function sanitizeConfig(config) {
-  const sanitized = {};
-  for (const [key, value] of Object.entries(config)) {
-    if (value === undefined) {
-      continue;
-    }
-    if (key === 'port') {
-      const parsedPort = Number(value);
-      sanitized[key] = Number.isNaN(parsedPort) ? value : parsedPort;
-      continue;
-    }
-    sanitized[key] = value;
-  }
-  return sanitized;
-}
-
 function pickAdditionalOptions(options) {
   const result = {};
   for (const [key, value] of Object.entries(options)) {
-    if (value === undefined) {
-      continue;
+    if (!CONNECTION_KEYS.includes(key) && key !== 'connectionString' && value !== undefined) {
+      result[key] = value;
     }
-    if (CONNECTION_KEYS.includes(key)) {
-      continue;
+  }
+  return result;
+}
+
+function sanitizeConfig(config) {
+  const result = {};
+  for (const [key, value] of Object.entries(config)) {
+    if (value !== undefined && value !== '') {
+      result[key] = value;
     }
-    result[key] = value;
   }
   return result;
 }
@@ -103,50 +93,71 @@ function createPool(options = {}) {
   return new Pool(additionalOptions);
 }
 
-function createService({ pool: providedPool, llmClient: providedLlmClient } = {}) {
-  const app = express();
-  app.use(express.json());
+const pool = createPool();
 
-  const pool = providedPool ?? createPool();
-  const activeLlmClient = providedLlmClient ?? llmClient;
-
-  async function getSessionContext(sessionId, limit = 10) {
-    const result = await pool.query(
-      'SELECT role, content FROM messages WHERE session_id = $1 ORDER BY timestamp DESC LIMIT $2',
-      [sessionId, limit]
-    );
-    return result.rows.reverse();
-  }
-
-  async function saveMessage(sessionId, role, content) {
-    await pool.query(
-      'INSERT INTO messages (session_id, role, content, timestamp) VALUES ($1, $2, $3, NOW())',
-      [sessionId, role, content]
-    );
-  }
-
-  app.get('/health', (req, res) => {
-    res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
-  });
-
-  app.post('/chat', async (req, res) => {
-    const { sessionId, message } = req.body;
-    if (!sessionId || !message) {
-      return res.status(400).json({ error: 'sessionId and message are required' });
-    }
-    try {
-      await saveMessage(sessionId, 'user', message);
-      const context = await getSessionContext(sessionId);
-      const { content } = await activeLlmClient.generate({ prompt: message, context });
-      await saveMessage(sessionId, 'assistant', content);
-      res.status(200).json({ response: content });
-    } catch (error) {
-      console.error('Error in /chat:', error);
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
-  return { app, pool };
+async function chatWithMemoryHandler(sessionId, userMessage, activePool, activeLlmClient, model = 'grok-beta') {
+  const sessionContext = await getSessionContext(sessionId, activePool);
+  const response = await activeLlmClient.chatWithContext(sessionContext, userMessage, { model });
+  await saveMessage(sessionId, 'user', userMessage, activePool);
+  await saveMessage(sessionId, 'assistant', response, activePool);
+  return response;
 }
 
-module.exports = { createService, createPool };
+async function getSessionContext(sessionId, activePool) {
+  const res = await activePool.query(
+    'SELECT role, content FROM memory_service WHERE session_id = $1 ORDER BY timestamp ASC',
+    [sessionId]
+  );
+  return res.rows.map(r => ({ role: r.role, content: r.content }));
+}
+
+async function saveMessage(sessionId, role, content, activePool) {
+  await activePool.query(
+    'INSERT INTO memory_service (session_id, role, content) VALUES ($1, $2, $3)',
+    [sessionId, role, content]
+  );
+}
+
+function createApp({ pool: providedPool, llmClient: providedLlmClient, defaultModel } = {}) {
+  const app = express();
+
+  app.use(express.json());
+
+  const activePool = providedPool ?? pool;
+  const activeLlmClient = providedLlmClient ?? llmClient;
+
+  app.post('/chat', async (req, res) => {
+    try {
+      const { session_id: sessionId, message, model } = req.body;
+      if (!sessionId || !message) {
+        return res.status(400).json({ error: 'session_id and message are required' });
+      }
+      const effectiveModel = model || defaultModel || 'grok-beta';
+      const response = await chatWithMemoryHandler(sessionId, message, activePool, activeLlmClient, effectiveModel);
+      res.json({ response });
+    } catch (err) {
+      console.error('Error in /chat:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  return app;
+}
+
+module.exports = {
+  createApp,
+  chatWithMemoryHandler,
+  getSessionContext,
+  saveMessage,
+  createPool,
+  pool,
+};
+
+if (require.main === module) {
+  const app = createApp();
+  const port = process.env.PORT || 3000;
+
+  app.listen(port, () => {
+    console.log(`Memory service listening on port ${port}`);
+  });
+}
