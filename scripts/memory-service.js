@@ -35,8 +35,72 @@ const express = require('express');
 const { Pool } = require('pg');
 const llmClient = require('./llm-client');
 
-function createPool() {
-  return new Pool({ connectionString: process.env.DATABASE_URL });
+const CONNECTION_KEYS = ['host', 'port', 'database', 'user', 'password'];
+
+function sanitizeConfig(config) {
+  const sanitized = {};
+  for (const [key, value] of Object.entries(config)) {
+    if (value === undefined) {
+      continue;
+    }
+    if (key === 'port') {
+      const parsedPort = Number(value);
+      sanitized[key] = Number.isNaN(parsedPort) ? value : parsedPort;
+      continue;
+    }
+    sanitized[key] = value;
+  }
+  return sanitized;
+}
+
+function pickAdditionalOptions(options) {
+  const result = {};
+  for (const [key, value] of Object.entries(options)) {
+    if (value === undefined) {
+      continue;
+    }
+    if (CONNECTION_KEYS.includes(key)) {
+      continue;
+    }
+    result[key] = value;
+  }
+  return result;
+}
+
+function hasConnectionConfig(config) {
+  return CONNECTION_KEYS.some(key => config[key] !== undefined);
+}
+
+function createPool(options = {}) {
+  const { connectionString: optionConnectionString, ...restOptions } = options;
+
+  if (optionConnectionString) {
+    const additionalOptions = pickAdditionalOptions(restOptions);
+    return new Pool({ connectionString: optionConnectionString, ...additionalOptions });
+  }
+
+  const envConfig = {
+    host: process.env.POSTGRES_HOST,
+    port: process.env.POSTGRES_PORT,
+    database: process.env.POSTGRES_DB,
+    user: process.env.POSTGRES_USER,
+    password: process.env.POSTGRES_PASSWORD,
+  };
+
+  const mergedConfig = sanitizeConfig({ ...envConfig, ...restOptions });
+
+  if (hasConnectionConfig(mergedConfig)) {
+    return new Pool(mergedConfig);
+  }
+
+  const envConnectionString = process.env.DATABASE_URL;
+  if (envConnectionString) {
+    const additionalOptions = pickAdditionalOptions(restOptions);
+    return new Pool({ connectionString: envConnectionString, ...additionalOptions });
+  }
+
+  const additionalOptions = sanitizeConfig(restOptions);
+  return new Pool(additionalOptions);
 }
 
 function createService({ pool: providedPool, llmClient: providedLlmClient } = {}) {
