@@ -87,6 +87,20 @@ AI Radar объединяет n8n, PostgreSQL и внутренний Memory Ser
    ```
 5. Дополнительно можно выполнить тесты (`npm test`) перед коммитом.
 
+## Инфраструктурные проверки
+Для автоматической проверки готовности стека добавлен сценарий `infra/tests/stack-health-check.sh`.
+Он поднимает docker-compose из `infra/docker-compose.yml`, ожидает статуса `healthy` для
+`postgres`, `n8n` и `ai-memory-service`, а затем останавливает и очищает ресурсы (`docker compose down --volumes --remove-orphans`).
+
+### Ограничения и переменные окружения
+- Таймаут ожидания по умолчанию составляет 300 секунд и задаётся переменной `STACK_HEALTH_TIMEOUT`.
+- Интервал между проверками — 5 секунд (`STACK_HEALTH_INTERVAL`).
+- Список контролируемых сервисов задаётся через `STACK_HEALTH_SERVICES`.
+- Для запуска требуется установленный Docker и плагин Docker Compose 2.20+.
+- По умолчанию используется файл переменных `.env.test`; его можно переопределить через `ENV_FILE`.
+
+Подробнее см. `infra/tests/README.md`.
+
 ## Сервисы и ссылки
 ### Docker Hub
 - [postgres:15-alpine](https://hub.docker.com/_/postgres)
