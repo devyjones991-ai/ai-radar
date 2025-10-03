@@ -10,7 +10,6 @@ jest.mock(
 
 const mockPgPool = {
   query: jest.fn(),
-  connect: jest.fn(),
   end: jest.fn(),
 };
 
@@ -26,58 +25,33 @@ const mockLlmClient = {
 
 jest.mock('./llm-client', () => mockLlmClient);
 
-const llmClient = require('./llm-client');
-const { createApp, chatWithMemoryHandler } = require('./memory-service');
-
-function createResponse() {
-  const res = {};
-  res.statusCode = 200;
-  res.status = jest.fn().mockImplementation(code => {
-    res.statusCode = code;
-    return res;
-  });
-  res.json = jest.fn().mockImplementation(body => {
-    res.body = body;
-    return res;
-  });
-  return res;
-}
+const { createService, createPool } = require('./memory-service');
 
 describe('memory-service', () => {
-  let getSessionContext;
-  let saveMessage;
-  let createPool;
-  let servicePool;
-
   beforeEach(() => {
-    jest.resetModules();
     jest.clearAllMocks();
-
-    ({ getSessionContext, saveMessage, createPool, pool: servicePool } = require('./memory-service'));
-  });
-
-  afterEach(() => {
-    jest.resetModules();
   });
 
   it('использует фабрику createPool так же, как остальные тесты', () => {
+    const { pool } = createService();
     const anotherPool = createPool();
 
     expect(anotherPool).toBe(mockPgPool);
-    expect(servicePool).toBe(mockPgPool);
+    expect(pool).toBe(mockPgPool);
   });
 
   it('возвращает сообщения из базы данных в хронологическом порядке', async () => {
     const rowsFromDb = [
-      { role: 'assistant', message_text: 'Последний ответ', model_used: 'model-a', created_at: '2024-05-02T10:00:00Z' },
-      { role: 'user', message_text: 'Первый вопрос', model_used: 'model-a', created_at: '2024-05-02T09:59:00Z' },
+      { role: 'assistant', message_text: 'Последний ответ', model_used: 'model-a', tokens_used: 42, created_at: '2024-05-02T10:00:00Z' },
+      { role: 'user', message_text: 'Первый вопрос', model_used: 'model-a', tokens_used: 11, created_at: '2024-05-02T09:59:00Z' },
     ];
     mockPgPool.query.mockResolvedValueOnce({ rows: [...rowsFromDb] });
 
-    const result = await getSessionContext('session-42', 2);
+    const service = createService();
+    const result = await service.getSessionContext('session-42', 2);
 
     expect(mockPgPool.query).toHaveBeenCalledWith(
-      'SELECT role, message_text, model_used, created_at FROM ai_sessions WHERE session_id = $1 ORDER BY created_at DESC LIMIT $2',
+      expect.stringContaining('SELECT role, message_text, model_used, tokens_used, created_at'),
       ['session-42', 2]
     );
     expect(result).toEqual(rowsFromDb.slice().reverse());
@@ -88,7 +62,8 @@ describe('memory-service', () => {
     mockPgPool.query.mockRejectedValueOnce(error);
     const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 
-    const result = await getSessionContext('session-error', 5);
+    const service = createService();
+    const result = await service.getSessionContext('session-error', 5);
 
     expect(result).toEqual([]);
     expect(consoleSpy).toHaveBeenCalledWith('Error getting session context:', error);
@@ -99,83 +74,109 @@ describe('memory-service', () => {
   it('сохраняет сообщение в базе данных', async () => {
     mockPgPool.query.mockResolvedValueOnce();
 
-    await saveMessage('session-100', 'assistant', 'Ответ с памятью', 'model-b', 64);
+    const service = createService();
+    await service.saveMessage('session-100', 'assistant', 'Ответ с памятью', 'model-b', 64);
 
     expect(mockPgPool.query).toHaveBeenCalledWith(
-      'INSERT INTO ai_sessions (session_id, role, message_text, model_used, tokens_used) VALUES ($1, $2, $3, $4, $5)',
+      expect.stringContaining('INSERT INTO ai_sessions'),
       ['session-100', 'assistant', 'Ответ с памятью', 'model-b', 64]
     );
   });
 
-  it('логирует ошибку при неудачной попытке сохранения сообщения', async () => {
+  it('логирует ошибку и пробрасывает исключение при неудачной попытке сохранения сообщения', async () => {
     const error = new Error('insert failed');
     mockPgPool.query.mockRejectedValueOnce(error);
     const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 
-    await saveMessage('session-100', 'user', 'Ошибка', 'model-b', null);
+    const service = createService();
 
+    await expect(service.saveMessage('session-100', 'user', 'Ошибка', 'model-b', null)).rejects.toThrow('insert failed');
     expect(consoleSpy).toHaveBeenCalledWith('Error saving message:', error);
 
     consoleSpy.mockRestore();
   });
 
-  it('chatWithMemoryHandler использует переданные зависимости', async () => {
+  it('обрабатывает чат через реальный маршрут и использует переданные зависимости', async () => {
     const pool = {
       query: jest
         .fn()
-        .mockResolvedValueOnce({ rows: [{ role: 'system', message_text: 'hi' }] })
-        .mockResolvedValue({ rows: [] }),
+        .mockResolvedValueOnce({ rows: [{ role: 'system', message_text: 'hi there' }] })
+        .mockResolvedValueOnce()
+        .mockResolvedValueOnce(),
     };
-    llmClient.generate.mockResolvedValue({ response: 'Ответ', evalCount: 5 });
-
-    const handler = chatWithMemoryHandler({ pool, llmClient });
-    const req = {
-      body: {
-        message: 'Привет',
-        sessionId: 'session-1',
-        model: 'test-model',
-        options: { temperature: 0.1 },
-      },
+    const llm = {
+      generate: jest.fn().mockResolvedValue({ response: 'Ответ', evalCount: 5, model: 'test-model' }),
     };
-    const res = createResponse();
 
-    await handler(req, res);
+    const { app } = createService({ pool, llmClient: llm, defaultModel: 'fallback-model' });
 
-    expect(pool.query).toHaveBeenCalled();
-    expect(llmClient.generate).toHaveBeenCalledWith(expect.any(String), {
-      model: 'test-model',
-      options: { temperature: 0.1 },
-    });
-    expect(res.statusCode).toBe(200);
-    expect(res.body).toEqual(
+    const chatResponse = await request(app)
+      .post('/chat')
+      .send({ message: 'Привет', sessionId: 'session-1', model: 'test-model', options: { temperature: 0.1 } });
+
+    expect(chatResponse.status).toBe(200);
+    expect(chatResponse.body).toEqual(
       expect.objectContaining({
         response: 'Ответ',
         sessionId: 'session-1',
         model: 'test-model',
-      }),
+        contextUsed: true,
+        evalCount: 5,
+        llmDisabled: false,
+      })
+    );
+
+    expect(pool.query).toHaveBeenCalledTimes(3);
+    expect(pool.query).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining('SELECT role, message_text, model_used, tokens_used, created_at'),
+      ['session-1', 10]
+    );
+    expect(pool.query).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining('INSERT INTO ai_sessions'),
+      ['session-1', 'user', 'Привет', 'test-model', null]
+    );
+    expect(pool.query).toHaveBeenNthCalledWith(
+      3,
+      expect.stringContaining('INSERT INTO ai_sessions'),
+      ['session-1', 'assistant', 'Ответ', 'test-model', 5]
+    );
+
+    expect(llm.generate).toHaveBeenCalledWith(
+      'system: hi there\nuser: Привет',
+      {
+        model: 'test-model',
+        options: { temperature: 0.1 },
+      }
     );
   });
 
-  it('createApp создаёт express приложение и регистрирует маршруты', async () => {
+  it('создает express приложение и регистрирует маршруты /health и /chat', async () => {
     mockPgPool.query
       .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValue({ rows: [] });
-    llmClient.generate.mockResolvedValue({ response: 'hello', evalCount: 1 });
+      .mockResolvedValueOnce()
+      .mockResolvedValueOnce();
+    mockLlmClient.generate.mockResolvedValue({ response: 'hello', evalCount: 1, model: 'deepseek-r1:70b' });
 
-    const app = createApp();
+    const { app, pool } = createService({ defaultModel: 'deepseek-r1:70b' });
 
     const healthResponse = await request(app).get('/health');
     expect(healthResponse.status).toBe(200);
     expect(healthResponse.body.status).toBe('ok');
 
-    const chatResponse = await request(app)
-      .post('/chat-with-memory')
-      .send({ message: 'ping', sessionId: 'abc' });
+    const chatResponse = await request(app).post('/chat').send({ message: 'ping', sessionId: 'abc' });
 
     expect(chatResponse.status).toBe(200);
-    expect(chatResponse.body).toHaveProperty('response', 'hello');
+    expect(chatResponse.body).toEqual(
+      expect.objectContaining({
+        response: 'hello',
+        sessionId: 'abc',
+        model: 'deepseek-r1:70b',
+      })
+    );
 
-    expect(app.pool).toBeDefined();
+    expect(pool).toBe(mockPgPool);
     expect(typeof app.getSessionContext).toBe('function');
     expect(typeof app.saveMessage).toBe('function');
   });
